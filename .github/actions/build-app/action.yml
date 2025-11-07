@@ -80,6 +80,13 @@ runs:
           yarn add ${{ inputs.module-to-install }}
         fi
 
+        if [[ '${{ inputs.platform }}' == 'ios' ]]; then
+          # Use xcode 16 for RN 0.80+
+          if [[ '${{ inputs.rn-ver }}' == "0.8"* || "${{ inputs.rn-ver }}" == "latest" ]]; then
+            sudo xcode-select --switch /Applications/Xcode_16.2.app/Contents/Developer
+          fi
+        fi
+
         # Debug info
         npx @react-native-community/cli info
 
@@ -98,6 +105,11 @@ runs:
           # Enable new arch for Android
           if [[ '${{ inputs.new-arch-enabled }}' == '1' ]]; then
             sed -i 's/newArchEnabled=false/newArchEnabled=true/' android/gradle.properties
+          fi
+
+          # Fix: generate codegen artifacts for RN 0.80 only
+          if [[ '${{ inputs.rn-ver }}' == "0.80"* ]]; then
+            ./android/gradlew generateCodegenArtifactsFromSchema -p android
           fi
 
           # Build Android
