@@ -120,6 +120,10 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
             if (options.hasKey("includeBase64")) options.getBoolean("includeBase64") else false
         val quality =
             if (options.hasKey("quality")) (options.getDouble("quality") * 100).toInt() else 90
+        val flipHorizontal =
+            if (options.hasKey("flipHorizontal")) options.getBoolean("flipHorizontal") else false
+        val flipVertical =
+            if (options.hasKey("flipVertical")) options.getBoolean("flipVertical") else false
         if (
             offset == null ||
                 size == null ||
@@ -167,10 +171,12 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                             height,
                             targetWidth,
                             targetHeight,
-                            headers
+                            headers,
+                            flipHorizontal,
+                            flipVertical
                         )
                     } else {
-                        cropTask(outOptions, uri, x, y, width, height, headers)
+                        cropTask(outOptions, uri, x, y, width, height, headers, flipHorizontal, flipVertical)
                     }
                 if (cropped == null) {
                     throw IOException("Cannot decode bitmap: $uri")
@@ -205,7 +211,9 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
         y: Int,
         width: Int,
         height: Int,
-        headers: HashMap<String, Any>?
+        headers: HashMap<String, Any>?,
+        flipHorizontal: Boolean,
+        flipVertical: Boolean
     ): Bitmap? {
         return openBitmapInputStream(uri, headers)?.use {
             // Efficiently crops image without loading full resolution into memory
@@ -238,7 +246,18 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
 
             return@use try {
                 val rect = Rect(left, top, right, bottom)
-                decoder.decodeRegion(rect, outOptions)
+                val bitmap = decoder.decodeRegion(rect, outOptions)
+
+                if (flipHorizontal || flipVertical) {
+                    val matrix = Matrix()
+                    matrix.postScale(
+                        if (flipHorizontal) -1f else 1f,
+                        if (flipVertical) -1f else 1f
+                    )
+                    Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                } else {
+                    bitmap
+                }
             } finally {
                 decoder.recycle()
             }
@@ -267,7 +286,9 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
         rectHeight: Int,
         outputWidth: Int,
         outputHeight: Int,
-        headers: HashMap<String, Any>?
+        headers: HashMap<String, Any>?,
+        flipHorizontal: Boolean,
+        flipVertical: Boolean
     ): Bitmap? {
         Assertions.assertNotNull(outOptions)
 
@@ -329,6 +350,12 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
             val cropHeight = (newHeight / outOptions.inSampleSize.toFloat()).roundToInt()
             val cropScale = scale * outOptions.inSampleSize
             val scaleMatrix = Matrix().apply { setScale(cropScale, cropScale) }
+            if (flipHorizontal || flipVertical) {
+                scaleMatrix.postScale(
+                    if (flipHorizontal) -1f else 1f,
+                    if (flipVertical) -1f else 1f
+                )
+            }
             val filter = true
 
             val rect = Rect(0, 0, decoder.width, decoder.height)

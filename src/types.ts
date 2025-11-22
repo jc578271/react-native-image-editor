@@ -7,6 +7,8 @@ export interface ImageCropData
   headers?: Record<string, string> | Headers;
   format?: 'png' | 'jpeg' | 'webp';
   resizeMode?: 'contain' | 'cover' | 'stretch' | 'center';
+  flipHorizontal?: boolean;
+  flipVertical?: boolean;
   // ^^^ codegen doesn't support union types yet
   // so to provide more type safety we override the type here
 }

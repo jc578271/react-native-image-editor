@@ -61,6 +61,16 @@ export interface Spec extends TurboModule {
       headers?: {
         [key: string]: string;
       };
+
+      /**
+       * (Optional) If true, the image will be flipped horizontally.
+       */
+      flipHorizontal?: boolean;
+
+      /**
+       * (Optional) If true, the image will be flipped vertically.
+       */
+      flipVertical?: boolean;
     }
   ): Promise<{
     /**

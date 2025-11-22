@@ -1,12 +1,8 @@
 {
   "name": "@react-native-community/image-editor",
-  "version": "4.3.0",
+  "version": "4.3.1",
   "description": "React Native Image Editing native modules for iOS & Android",
-  "main": "lib/commonjs/index",
-  "module": "lib/module/index",
-  "types": "lib/typescript/src/index.d.ts",
-  "react-native": "src/index",
-  "source": "src/index",
+  "main": "src/index.ts",
   "author": "Dawid Urbaniak <dawidu@onet.pl>",
   "contributors": [],
   "homepage": "https://github.com/callstack/react-native-image-editor#readme",
@@ -53,8 +49,7 @@
     "lint:android": "./android/gradlew -p android spotlessCheck --quiet",
     "format:android": "./android/gradlew -p android spotlessapply",
     "release": "release-it",
-    "build": "bob build",
-    "prepack": "yarn run build"
+    "build": "bob build"
   },
   "peerDependencies": {
     "react-native": ">=0.57.0"
@@ -65,19 +60,12 @@
     }
   },
   "devDependencies": {
-    "@babel/core": "^7.26.0",
-    "@callstack/eslint-config": "^15.0.0",
-    "@react-native/babel-preset": "^0.77.0",
-    "@react-native/typescript-config": "^0.77.0",
-    "@types/react": "^18.3.18",
-    "eslint": "^9.18.0",
-    "prettier": "^3.4.2",
-    "react": "^18.3.1",
-    "react-native": "^0.77.0",
-    "react-native-builder-bob": "^0.35.2",
-    "react-native-test-app": "^4.0.9",
-    "release-it": "^10.3.1",
-    "typescript": "^5.7.3"
+    "@react-native/babel-preset": "0.81.4",
+    "@react-native/typescript-config": "0.81.4",
+    "@types/react": "^19.1.0",
+    "react": "19.1.0",
+    "react-native": "0.81.4",
+    "typescript": "^5.8.3"
   },
   "publishConfig": {
     "access": "public",
@@ -90,19 +78,5 @@
     "android": {
       "javaPackageName": "com.reactnativecommunity.imageeditor"
     }
-  },
-  "react-native-builder-bob": {
-    "source": "src",
-    "output": "lib",
-    "targets": [
-      "commonjs",
-      "module",
-      [
-        "typescript",
-        {
-          "project": "tsconfig.build.json"
-        }
-      ]
-    ]
   }
 }

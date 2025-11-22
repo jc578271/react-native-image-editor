@@ -37,6 +37,8 @@ public:
     NSString *format;
     BOOL includeBase64;
     NSDictionary *headers;
+    BOOL flipHorizontal;
+    BOOL flipVertical;
 };
 
 @implementation RNCImageEditor
@@ -56,6 +58,8 @@ RCT_EXPORT_MODULE()
                         quality:(id)quality
                   includeBase64:(id)includeBase64
                         headers:(id)headers
+                 flipHorizontal:(id)flipHorizontal
+                   flipVertical:(id)flipVertical
 {
     return Params{
         .offset = {[RCTConvert double:offsetX], [RCTConvert double:offsetY]},
@@ -65,7 +69,9 @@ RCT_EXPORT_MODULE()
         .quality = [RCTConvert CGFloat:quality],
         .format = [RCTConvert NSString:format],
         .includeBase64 = [RCTConvert BOOL:includeBase64],
-        .headers = [RCTConvert NSDictionary:RCTNilIfNull(headers)]
+        .headers = [RCTConvert NSDictionary:RCTNilIfNull(headers)],
+        .flipHorizontal = [RCTConvert BOOL:flipHorizontal],
+        .flipVertical = [RCTConvert BOOL:flipVertical]
     };
 }
 
@@ -96,7 +102,9 @@ RCT_EXPORT_MODULE()
         displayHeight:@(data.displaySize().has_value() ? data.displaySize()->height() : DEFAULT_DISPLAY_SIZE)
         quality:@(data.quality().has_value() ? *data.quality() : DEFAULT_COMPRESSION_QUALITY)
         includeBase64:@(data.includeBase64().has_value() ? *data.includeBase64() : NO)
-        headers: data.headers()];
+        headers: data.headers()
+        flipHorizontal:@(data.flipHorizontal().has_value() ? *data.flipHorizontal() : NO)
+        flipVertical:@(data.flipVertical().has_value() ? *data.flipVertical() : NO)];
 #else
 RCT_EXPORT_METHOD(cropImage:(NSString *)uri
                   cropData:(NSDictionary *)cropData
@@ -113,7 +121,9 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
     displayHeight:cropData[@"displaySize"] ? cropData[@"displaySize"][@"height"] : @(DEFAULT_DISPLAY_SIZE)
     quality:cropData[@"quality"] ? cropData[@"quality"] : @(DEFAULT_COMPRESSION_QUALITY)
     includeBase64:cropData[@"includeBase64"]
-    headers:cropData[@"headers"]];
+    headers:cropData[@"headers"]
+    flipHorizontal:cropData[@"flipHorizontal"]
+    flipVertical:cropData[@"flipVertical"]];
 
 #endif
   NSMutableURLRequest *imageRequest = [NSMutableURLRequest requestWithURL:[NSURL URLWithString: uri]];
@@ -136,7 +146,7 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
       return;
     }
     if (params.quality > 1 || params.quality < 0) {
-      reject(RCTErrorUnspecified, @("quality must be a number between 0 and 1"), nil);
+      reject(RCTErrorUnspecified, @"quality must be a number between 0 and 1", nil);
       return;
     }
 
@@ -145,6 +155,26 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
     CGRect targetRect = {{-params.offset.x, -params.offset.y}, image.size};
     CGAffineTransform transform = RCTTransformFromTargetRect(image.size, targetRect);
     UIImage *croppedImage = RCTTransformImage(image, targetSize, image.scale, transform);
+
+    // Flip image
+    if (params.flipHorizontal || params.flipVertical) {
+      CGSize size = croppedImage.size;
+      UIGraphicsBeginImageContextWithOptions(size, NO, croppedImage.scale);
+      CGContextRef context = UIGraphicsGetCurrentContext();
+      CGAffineTransform transform = CGAffineTransformIdentity;
+      if (params.flipHorizontal) {
+        transform = CGAffineTransformTranslate(transform, size.width, 0);
+        transform = CGAffineTransformScale(transform, -1, 1);
+      }
+      if (params.flipVertical) {
+        transform = CGAffineTransformTranslate(transform, 0, size.height);
+        transform = CGAffineTransformScale(transform, 1, -1);
+      }
+      CGContextConcatCTM(context, transform);
+      [croppedImage drawInRect:CGRectMake(0, 0, size.width, size.height)];
+      croppedImage = UIGraphicsGetImageFromCurrentImageContext();
+      UIGraphicsEndImageContext();
+    }
 
     // Scale image
     if (params.displaySize.width != DEFAULT_DISPLAY_SIZE && params.displaySize.height != DEFAULT_DISPLAY_SIZE) {
