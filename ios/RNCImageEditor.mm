@@ -37,8 +37,6 @@ public:
     NSString *format;
     BOOL includeBase64;
     NSDictionary *headers;
-    BOOL flipHorizontal;
-    BOOL flipVertical;
 };
 
 @implementation RNCImageEditor
@@ -58,8 +56,6 @@ RCT_EXPORT_MODULE()
                         quality:(id)quality
                   includeBase64:(id)includeBase64
                         headers:(id)headers
-                 flipHorizontal:(id)flipHorizontal
-                   flipVertical:(id)flipVertical
 {
     return Params{
         .offset = {[RCTConvert double:offsetX], [RCTConvert double:offsetY]},
@@ -69,9 +65,7 @@ RCT_EXPORT_MODULE()
         .quality = [RCTConvert CGFloat:quality],
         .format = [RCTConvert NSString:format],
         .includeBase64 = [RCTConvert BOOL:includeBase64],
-        .headers = [RCTConvert NSDictionary:RCTNilIfNull(headers)],
-        .flipHorizontal = [RCTConvert BOOL:flipHorizontal],
-        .flipVertical = [RCTConvert BOOL:flipVertical]
+        .headers = [RCTConvert NSDictionary:RCTNilIfNull(headers)]
     };
 }
 
@@ -102,9 +96,7 @@ RCT_EXPORT_MODULE()
         displayHeight:@(data.displaySize().has_value() ? data.displaySize()->height() : DEFAULT_DISPLAY_SIZE)
         quality:@(data.quality().has_value() ? *data.quality() : DEFAULT_COMPRESSION_QUALITY)
         includeBase64:@(data.includeBase64().has_value() ? *data.includeBase64() : NO)
-        headers: data.headers()
-        flipHorizontal:@(data.flipHorizontal().has_value() ? *data.flipHorizontal() : NO)
-        flipVertical:@(data.flipVertical().has_value() ? *data.flipVertical() : NO)];
+        headers: data.headers()];
 #else
 RCT_EXPORT_METHOD(cropImage:(NSString *)uri
                   cropData:(NSDictionary *)cropData
@@ -121,9 +113,7 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
     displayHeight:cropData[@"displaySize"] ? cropData[@"displaySize"][@"height"] : @(DEFAULT_DISPLAY_SIZE)
     quality:cropData[@"quality"] ? cropData[@"quality"] : @(DEFAULT_COMPRESSION_QUALITY)
     includeBase64:cropData[@"includeBase64"]
-    headers:cropData[@"headers"]
-    flipHorizontal:cropData[@"flipHorizontal"]
-    flipVertical:cropData[@"flipVertical"]];
+    headers:cropData[@"headers"]];
 
 #endif
   NSMutableURLRequest *imageRequest = [NSMutableURLRequest requestWithURL:[NSURL URLWithString: uri]];
@@ -146,7 +136,7 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
       return;
     }
     if (params.quality > 1 || params.quality < 0) {
-      reject(RCTErrorUnspecified, @"quality must be a number between 0 and 1", nil);
+      reject(RCTErrorUnspecified, @("quality must be a number between 0 and 1"), nil);
       return;
     }
 
@@ -155,26 +145,6 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
     CGRect targetRect = {{-params.offset.x, -params.offset.y}, image.size};
     CGAffineTransform transform = RCTTransformFromTargetRect(image.size, targetRect);
     UIImage *croppedImage = RCTTransformImage(image, targetSize, image.scale, transform);
-
-    // Flip image
-    if (params.flipHorizontal || params.flipVertical) {
-      CGSize size = croppedImage.size;
-      UIGraphicsBeginImageContextWithOptions(size, NO, croppedImage.scale);
-      CGContextRef context = UIGraphicsGetCurrentContext();
-      CGAffineTransform transform = CGAffineTransformIdentity;
-      if (params.flipHorizontal) {
-        transform = CGAffineTransformTranslate(transform, size.width, 0);
-        transform = CGAffineTransformScale(transform, -1, 1);
-      }
-      if (params.flipVertical) {
-        transform = CGAffineTransformTranslate(transform, 0, size.height);
-        transform = CGAffineTransformScale(transform, 1, -1);
-      }
-      CGContextConcatCTM(context, transform);
-      [croppedImage drawInRect:CGRectMake(0, 0, size.width, size.height)];
-      croppedImage = UIGraphicsGetImageFromCurrentImageContext();
-      UIGraphicsEndImageContext();
-    }
 
     // Scale image
     if (params.displaySize.width != DEFAULT_DISPLAY_SIZE && params.displaySize.height != DEFAULT_DISPLAY_SIZE) {
@@ -226,6 +196,147 @@ RCT_EXPORT_METHOD(cropImage:(NSString *)uri
 
     resolve(response);
   }];
+}
+
+/**
+ * Flips an image horizontally or vertically and saves the result to temporary file.
+ *
+ * @param uri An image URL
+ * @param options Dictionary with `direction`, `quality`, `format`, and `includeBase64`.
+ *        `direction` should be either "horizontal" or "vertical".
+ */
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void) flipImage:(NSString *)uri
+           options:(JS::NativeRNCImageEditor::SpecFlipImageOptions &)options
+           resolve:(RCTPromiseResolveBlock)resolve
+            reject:(RCTPromiseRejectBlock)reject
+{
+    NSString *direction = options.direction().has_value() ? 
+        [NSString stringWithUTF8String:options.direction()->c_str()] : @"horizontal";
+    CGFloat quality = options.quality().has_value() ? 
+        *options.quality() : DEFAULT_COMPRESSION_QUALITY;
+    NSString *format = options.format().has_value() ? 
+        [NSString stringWithUTF8String:options.format()->c_str()] : nil;
+    BOOL includeBase64 = options.includeBase64().has_value() ? 
+        *options.includeBase64() : NO;
+    NSDictionary *headers = options.headers();
+#else
+RCT_EXPORT_METHOD(flipImage:(NSString *)uri
+                  options:(NSDictionary *)options
+                  resolve:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject)
+{
+    NSString *direction = options[@"direction"] ?: @"horizontal";
+    CGFloat quality = options[@"quality"] ? 
+        [options[@"quality"] doubleValue] : DEFAULT_COMPRESSION_QUALITY;
+    NSString *format = options[@"format"];
+    BOOL includeBase64 = options[@"includeBase64"] ? 
+        [options[@"includeBase64"] boolValue] : NO;
+    NSDictionary *headers = options[@"headers"];
+#endif
+
+    // Validate direction
+    if (![direction isEqualToString:@"horizontal"] && 
+        ![direction isEqualToString:@"vertical"]) {
+        reject(RCTErrorUnspecified, 
+               @"direction must be 'horizontal' or 'vertical'", nil);
+        return;
+    }
+
+    // Validate quality
+    if (quality > 1 || quality < 0) {
+        reject(RCTErrorUnspecified, 
+               @"quality must be a number between 0 and 1", nil);
+        return;
+    }
+
+    NSMutableURLRequest *imageRequest = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:uri]];
+    [headers enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+        if (value) {
+            [imageRequest addValue:[RCTConvert NSString:value] forHTTPHeaderField:key];
+        }
+    }];
+
+    NSURL *url = [imageRequest URL];
+    NSString *urlPath = [url path];
+    NSString *extension = [urlPath pathExtension];
+    if ([format isEqualToString:@"png"] || [format isEqualToString:@"jpeg"]) {
+        extension = format;
+    }
+
+    [[_bridge moduleForName:@"ImageLoader" lazilyLoadIfNecessary:YES] 
+     loadImageWithURLRequest:imageRequest callback:^(NSError *error, UIImage *image) {
+        if (error) {
+            reject(@(error.code).stringValue, error.description, error);
+            return;
+        }
+
+        // Flip image
+        CGSize size = image.size;
+        UIGraphicsBeginImageContextWithOptions(size, NO, image.scale);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        
+        CGAffineTransform transform = CGAffineTransformIdentity;
+        if ([direction isEqualToString:@"horizontal"]) {
+            transform = CGAffineTransformTranslate(transform, size.width, 0);
+            transform = CGAffineTransformScale(transform, -1, 1);
+        } else if ([direction isEqualToString:@"vertical"]) {
+            transform = CGAffineTransformTranslate(transform, 0, size.height);
+            transform = CGAffineTransformScale(transform, 1, -1);
+        }
+        
+        CGContextConcatCTM(context, transform);
+        [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
+        UIImage *flippedImage = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+
+        // Store image
+        NSString *type = @"image/jpeg";
+        NSString *path = NULL;
+        NSData *imageData = NULL;
+
+        if ([extension isEqualToString:@"png"]) {
+            type = @"image/png";
+            imageData = UIImagePNGRepresentation(flippedImage);
+            path = [RNCFileSystem generatePathInDirectory:
+                    [[RNCFileSystem cacheDirectoryPath] stringByAppendingPathComponent:@"ReactNative_flipped_image_"] 
+                    withExtension:@".png"];
+        } else {
+            imageData = UIImageJPEGRepresentation(flippedImage, quality);
+            path = [RNCFileSystem generatePathInDirectory:
+                    [[RNCFileSystem cacheDirectoryPath] stringByAppendingPathComponent:@"ReactNative_flipped_image_"] 
+                    withExtension:@".jpg"];
+        }
+
+        NSError *writeError;
+        NSString *resultUri = [RNCImageUtils writeImage:imageData toPath:path error:&writeError];
+
+        if (writeError != nil) {
+            reject(@(writeError.code).stringValue, writeError.description, writeError);
+            return;
+        }
+
+        NSURL *fileurl = [[NSURL alloc] initFileURLWithPath:path];
+        NSString *filename = fileurl.lastPathComponent;
+        NSError *attributesError = nil;
+        NSDictionary *fileAttributes = [[NSFileManager defaultManager] 
+                                        attributesOfItemAtPath:path error:&attributesError];
+        NSNumber *fileSize = fileAttributes == nil ? 0 : [fileAttributes objectForKey:NSFileSize];
+
+        NSMutableDictionary *response = [[NSMutableDictionary alloc] init];
+        response[@"path"] = path;
+        response[@"uri"] = resultUri;
+        response[@"name"] = filename;
+        response[@"type"] = type;
+        response[@"size"] = fileSize ?: @(0);
+        response[@"width"] = @(flippedImage.size.width);
+        response[@"height"] = @(flippedImage.size.height);
+        if (includeBase64) {
+            response[@"base64"] = [imageData base64EncodedStringWithOptions:0];
+        }
+
+        resolve(response);
+    }];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED

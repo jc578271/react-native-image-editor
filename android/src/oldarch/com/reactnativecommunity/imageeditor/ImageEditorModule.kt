@@ -30,6 +30,11 @@ class ImageEditorModule(reactContext: ReactApplicationContext) :
         moduleImpl.cropImage(uri, options, promise)
     }
 
+    @ReactMethod
+    fun flipImage(uri: String, options: ReadableMap, promise: Promise) {
+        moduleImpl.flipImage(uri, options, promise)
+    }
+
     companion object {
         const val NAME = ImageEditorModuleImpl.NAME
     }

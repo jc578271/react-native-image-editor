@@ -8,7 +8,7 @@
 import { Platform } from 'react-native';
 import NativeRNCImageEditor from './NativeRNCImageEditor';
 import type { Spec } from './NativeRNCImageEditor';
-import type { ImageCropData, CropResult } from './types.ts';
+import type { ImageCropData, CropResult, ImageFlipData, FlipResult } from './types.ts';
 
 const LINKING_ERROR =
   `The package '@react-native-community/image-editor' doesn't seem to be linked. Make sure: \n\n` +
@@ -19,10 +19,10 @@ const LINKING_ERROR =
 const RNCImageEditor: Spec = NativeRNCImageEditor
   ? NativeRNCImageEditor
   : new Proxy({} as Spec, {
-      get() {
-        throw new Error(LINKING_ERROR);
-      },
-    });
+    get() {
+      throw new Error(LINKING_ERROR);
+    },
+  });
 
 type CropResultWithoutBase64 = Omit<CropResult, 'base64'>;
 type ImageCropDataWithoutBase64 = Omit<ImageCropData, 'includeBase64'>;
@@ -69,6 +69,40 @@ class ImageEditor {
       headers: toHeadersObject(cropData.headers),
     }) as Promise<CropResult>;
   }
+
+  /**
+   * Flip the image specified by the URI param horizontally or vertically. If URI points to a remote
+   * image, it will be downloaded automatically. If the image cannot be loaded/downloaded, 
+   * the promise will be rejected.
+   *
+   * If the flipping process is successful, the resultant flipped image
+   * will be stored in the Cache Path, and the URI returned in the promise
+   * will point to the image in the cache path. Remember to delete the
+   * flipped image from the cache path when you are done with it.
+   */
+
+  // TS overload for better `base64` type inference
+  static flipImage(
+    uri: string,
+    options?: Omit<ImageFlipData, 'includeBase64'>
+  ): Promise<Omit<FlipResult, 'base64'>>;
+  static flipImage(
+    uri: string,
+    options: Omit<ImageFlipData, 'includeBase64'> & { includeBase64: false }
+  ): Promise<Omit<FlipResult, 'base64'>>;
+  static flipImage(
+    uri: string,
+    options: Omit<ImageFlipData, 'includeBase64'> & { includeBase64: true }
+  ): Promise<FlipResult & { base64: string }>;
+
+  static flipImage(uri: string, options: ImageFlipData = {}): Promise<FlipResult> {
+    return RNCImageEditor.flipImage(uri, {
+      ...options,
+      headers: toHeadersObject(options.headers),
+    }) as Promise<FlipResult>;
+  }
 }
 
 export default ImageEditor;
+
+export type { ImageCropData, CropResult, ImageFlipData, FlipResult };

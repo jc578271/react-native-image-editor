@@ -19,6 +19,23 @@ export interface CropResult
   // ^^^ codegen doesn't support union types yet
 }
 
+type ImageFlipDataFromSpec = Parameters<Spec['flipImage']>[1];
+
+export interface ImageFlipData
+  extends Omit<ImageFlipDataFromSpec, 'headers' | 'format' | 'direction'> {
+  headers?: Record<string, string> | Headers;
+  format?: 'png' | 'jpeg' | 'webp';
+  direction?: 'horizontal' | 'vertical';
+  // ^^^ codegen doesn't support union types yet
+  // so to provide more type safety we override the type here
+}
+
+export interface FlipResult
+  extends Omit<AsyncReturnType<Spec['flipImage']>, 'type'> {
+  type: 'image/jpeg' | 'image/png' | 'image/webp';
+  // ^^^ codegen doesn't support union types yet
+}
+
 // Utils
 type AsyncReturnType<T> = T extends (...args: any[]) => Promise<infer R>
   ? R

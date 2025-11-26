@@ -120,10 +120,6 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
             if (options.hasKey("includeBase64")) options.getBoolean("includeBase64") else false
         val quality =
             if (options.hasKey("quality")) (options.getDouble("quality") * 100).toInt() else 90
-        val flipHorizontal =
-            if (options.hasKey("flipHorizontal")) options.getBoolean("flipHorizontal") else false
-        val flipVertical =
-            if (options.hasKey("flipVertical")) options.getBoolean("flipVertical") else false
         if (
             offset == null ||
                 size == null ||
@@ -171,12 +167,10 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                             height,
                             targetWidth,
                             targetHeight,
-                            headers,
-                            flipHorizontal,
-                            flipVertical
+                            headers
                         )
                     } else {
-                        cropTask(outOptions, uri, x, y, width, height, headers, flipHorizontal, flipVertical)
+                        cropTask(outOptions, uri, x, y, width, height, headers)
                     }
                 if (cropped == null) {
                     throw IOException("Cannot decode bitmap: $uri")
@@ -188,6 +182,67 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                     copyExif(reactContext, Uri.parse(uri), tempFile)
                 }
                 promise.resolve(getResultMap(tempFile, cropped, mimeType, includeBase64))
+            } catch (e: Exception) {
+                promise.reject(e)
+            }
+        }
+    }
+
+    /**
+     * Flip an image horizontally or vertically. The promise will be resolved with the file:// URI 
+     * of the new image as the only argument.
+     *
+     * @param uri the URI of the image to flip
+     * @param options flip parameters specified as `{direction: "horizontal" | "vertical"}`.
+     *   Optionally includes `{format, quality, includeBase64}`.
+     * @param promise Promise to be resolved when the image has been flipped
+     */
+    fun flipImage(uri: String?, options: ReadableMap, promise: Promise) {
+        val headers =
+            if (options.hasKey("headers") && options.getType("headers") == ReadableType.Map)
+                safeConvert(options.getMap("headers")?.toHashMap())
+            else null
+        val format = if (options.hasKey("format")) options.getString("format") else null
+        val direction = if (options.hasKey("direction")) options.getString("direction") else "horizontal"
+        val includeBase64 =
+            if (options.hasKey("includeBase64")) options.getBoolean("includeBase64") else false
+        val quality =
+            if (options.hasKey("quality")) (options.getDouble("quality") * 100).toInt() else 90
+        
+        if (uri.isNullOrEmpty()) {
+            throw JSApplicationIllegalArgumentException("Please specify a URI")
+        }
+        if (quality > 100 || quality < 0) {
+            promise.reject(
+                JSApplicationIllegalArgumentException("quality must be a number between 0 and 1")
+            )
+            return
+        }
+        if (direction != "horizontal" && direction != "vertical") {
+            promise.reject(
+                JSApplicationIllegalArgumentException("direction must be 'horizontal' or 'vertical'")
+            )
+            return
+        }
+
+        moduleCoroutineScope.launch {
+            try {
+                val outOptions = BitmapFactory.Options()
+                val flipped = flipTask(outOptions, uri, direction, headers)
+                
+                if (flipped == null) {
+                    throw IOException("Cannot decode bitmap: $uri")
+                }
+                
+                val mimeType = getMimeType(outOptions, format)
+                val tempFile = createTempFile(reactContext, mimeType)
+                writeCompressedBitmapToFile(flipped, mimeType, tempFile, quality)
+                
+                if (mimeType == MimeType.JPEG) {
+                    copyExif(reactContext, Uri.parse(uri), tempFile)
+                }
+                
+                promise.resolve(getResultMap(tempFile, flipped, mimeType, includeBase64))
             } catch (e: Exception) {
                 promise.reject(e)
             }
@@ -211,9 +266,7 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
         y: Int,
         width: Int,
         height: Int,
-        headers: HashMap<String, Any>?,
-        flipHorizontal: Boolean,
-        flipVertical: Boolean
+        headers: HashMap<String, Any>?
     ): Bitmap? {
         return openBitmapInputStream(uri, headers)?.use {
             // Efficiently crops image without loading full resolution into memory
@@ -245,22 +298,88 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                 }
 
             return@use try {
-                val rect = Rect(left, top, right, bottom)
-                val bitmap = decoder.decodeRegion(rect, outOptions)
-
-                if (flipHorizontal || flipVertical) {
-                    val matrix = Matrix()
-                    matrix.postScale(
-                        if (flipHorizontal) -1f else 1f,
-                        if (flipVertical) -1f else 1f
-                    )
-                    Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                } else {
-                    bitmap
+                // Calculate intersection with actual image bounds
+                val cropLeft = left.coerceIn(0, imageWidth)
+                val cropTop = top.coerceIn(0, imageHeight)
+                val cropRight = right.coerceIn(0, imageWidth)
+                val cropBottom = bottom.coerceIn(0, imageHeight)
+                
+                val actualWidth = cropRight - cropLeft
+                val actualHeight = cropBottom - cropTop
+                
+                // Calculate padding needed for out-of-bounds regions
+                val paddingLeft = if (left < 0) -left else 0
+                val paddingTop = if (top < 0) -top else 0
+                
+                // Determine final dimensions based on orientation
+                val finalWidth = when (orientation) {
+                    90, 270 -> height
+                    else -> width
                 }
+                val finalHeight = when (orientation) {
+                    90, 270 -> width
+                    else -> height
+                }
+                
+                // Create bitmap with black background at requested size
+                val resultBitmap = Bitmap.createBitmap(finalWidth, finalHeight, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(resultBitmap)
+                canvas.drawColor(android.graphics.Color.BLACK)
+                
+                // Decode and draw only the valid region if it exists
+                if (actualWidth > 0 && actualHeight > 0) {
+                    val rect = Rect(cropLeft, cropTop, cropRight, cropBottom)
+                    val croppedBitmap = decoder.decodeRegion(rect, outOptions)
+                    canvas.drawBitmap(croppedBitmap, paddingLeft.toFloat(), paddingTop.toFloat(), null)
+                    croppedBitmap.recycle()
+                }
+                
+                resultBitmap
             } finally {
                 decoder.recycle()
             }
+        }
+    }
+
+    /**
+     * Flips a bitmap horizontally or vertically.
+     *
+     * @param outOptions Bitmap options, useful to determine `outMimeType`.
+     * @param uri the URI of the image to flip
+     * @param direction "horizontal" or "vertical"
+     * @param headers optional headers for loading the image
+     */
+    private fun flipTask(
+        outOptions: BitmapFactory.Options,
+        uri: String,
+        direction: String,
+        headers: HashMap<String, Any>?
+    ): Bitmap? {
+        return openBitmapInputStream(uri, headers)?.use { inputStream ->
+            val bitmap = BitmapFactory.decodeStream(inputStream, null, outOptions)
+            
+            if (bitmap == null) {
+                return@use null
+            }
+            
+            val matrix = Matrix()
+            when (direction) {
+                "horizontal" -> matrix.postScale(-1f, 1f)
+                "vertical" -> matrix.postScale(1f, -1f)
+            }
+            
+            val flippedBitmap = Bitmap.createBitmap(
+                bitmap,
+                0,
+                0,
+                bitmap.width,
+                bitmap.height,
+                matrix,
+                true
+            )
+            
+            bitmap.recycle()
+            flippedBitmap
         }
     }
 
@@ -286,9 +405,7 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
         rectHeight: Int,
         outputWidth: Int,
         outputHeight: Int,
-        headers: HashMap<String, Any>?,
-        flipHorizontal: Boolean,
-        flipVertical: Boolean
+        headers: HashMap<String, Any>?
     ): Bitmap? {
         Assertions.assertNotNull(outOptions)
 
@@ -324,6 +441,22 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                     else -> outputWidth to outputHeight
                 }
 
+            // Calculate intersection with actual image bounds
+            val imageWidth = decoder.width
+            val imageHeight = decoder.height
+            
+            val cropLeft = x.coerceIn(0, imageWidth)
+            val cropTop = y.coerceIn(0, imageHeight)
+            val cropRight = (x + width).coerceIn(0, imageWidth)
+            val cropBottom = (y + height).coerceIn(0, imageHeight)
+            
+            val actualCropWidth = cropRight - cropLeft
+            val actualCropHeight = cropBottom - cropTop
+            
+            // Calculate padding needed for out-of-bounds regions
+            val paddingLeft = if (x < 0) -x else 0
+            val paddingTop = if (y < 0) -y else 0
+
             val cropRectRatio = width / height.toFloat()
             val targetRatio = targetWidth / targetHeight.toFloat()
             val isCropRatioLargerThanTargetRatio = cropRectRatio > targetRatio
@@ -339,30 +472,75 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                 if (isCropRatioLargerThanTargetRatio) targetHeight / height.toFloat()
                 else targetWidth / width.toFloat()
 
-            // Decode the bitmap. We have to open the stream again, like in the example linked
-            // above.
-            // Is there a way to just continue reading from the stream?
+            // Decode the bitmap with efficient sampling
             outOptions.inSampleSize = getDecodeSampleSize(width, height, targetWidth, targetHeight)
 
-            val cropX = (newX / outOptions.inSampleSize.toFloat()).roundToInt()
-            val cropY = (newY / outOptions.inSampleSize.toFloat()).roundToInt()
+            // Decode the full image region (or as much as possible)
+            val rect = Rect(0, 0, decoder.width, decoder.height)
+            val fullBitmap = decoder.decodeRegion(rect, outOptions)
+            
+            // Calculate scaled dimensions
+            val scaledImageWidth = fullBitmap.width
+            val scaledImageHeight = fullBitmap.height
+            
+            // Adjust crop coordinates for the scaled bitmap
+            val scaledCropLeft = (cropLeft / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceIn(0, scaledImageWidth)
+            val scaledCropTop = (cropTop / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceIn(0, scaledImageHeight)
+            val scaledActualWidth = (actualCropWidth / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceAtMost(scaledImageWidth - scaledCropLeft)
+            val scaledActualHeight = (actualCropHeight / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceAtMost(scaledImageHeight - scaledCropTop)
+            
+            // Create bitmap with full requested dimensions (including padding areas)
+            val scaledWidth = (width / outOptions.inSampleSize.toFloat()).roundToInt()
+            val scaledHeight = (height / outOptions.inSampleSize.toFloat()).roundToInt()
+            val paddedBitmap = Bitmap.createBitmap(scaledWidth, scaledHeight, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(paddedBitmap)
+            
+            // Fill with black for out-of-bounds areas
+            canvas.drawColor(android.graphics.Color.BLACK)
+            
+            // Extract and draw the actual crop region from the decoded bitmap
+            if (scaledActualWidth > 0 && scaledActualHeight > 0) {
+                val croppedRegion = Bitmap.createBitmap(
+                    fullBitmap,
+                    scaledCropLeft,
+                    scaledCropTop,
+                    scaledActualWidth,
+                    scaledActualHeight
+                )
+                
+                // Draw the cropped region at the correct position with padding
+                val scaledPaddingLeft = (paddingLeft / outOptions.inSampleSize.toFloat()).roundToInt()
+                val scaledPaddingTop = (paddingTop / outOptions.inSampleSize.toFloat()).roundToInt()
+                canvas.drawBitmap(croppedRegion, scaledPaddingLeft.toFloat(), scaledPaddingTop.toFloat(), null)
+                croppedRegion.recycle()
+            }
+            
+            fullBitmap.recycle()
+            
+            // Now apply aspect ratio cropping and scaling
+            val cropX = ((newX - x) / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceIn(0, paddedBitmap.width)
+            val cropY = ((newY - y) / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceIn(0, paddedBitmap.height)
             val cropWidth = (newWidth / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceAtMost(paddedBitmap.width - cropX)
             val cropHeight = (newHeight / outOptions.inSampleSize.toFloat()).roundToInt()
+                .coerceAtMost(paddedBitmap.height - cropY)
+            
+            if (cropWidth <= 0 || cropHeight <= 0) {
+                return paddedBitmap
+            }
+            
             val cropScale = scale * outOptions.inSampleSize
             val scaleMatrix = Matrix().apply { setScale(cropScale, cropScale) }
-            if (flipHorizontal || flipVertical) {
-                scaleMatrix.postScale(
-                    if (flipHorizontal) -1f else 1f,
-                    if (flipVertical) -1f else 1f
-                )
-            }
             val filter = true
 
-            val rect = Rect(0, 0, decoder.width, decoder.height)
-            val bitmap = decoder.decodeRegion(rect, outOptions)
-
-            return Bitmap.createBitmap(
-                bitmap,
+            val finalBitmap = Bitmap.createBitmap(
+                paddedBitmap,
                 cropX,
                 cropY,
                 cropWidth,
@@ -370,6 +548,10 @@ class ImageEditorModuleImpl(private val reactContext: ReactApplicationContext) {
                 scaleMatrix,
                 filter
             )
+            
+            paddedBitmap.recycle()
+            
+            return finalBitmap
         }
     }
 
